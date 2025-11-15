@@ -1,0 +1,123 @@
+import time
+from dronekit import connect, VehicleMode
+from datetime import datetime
+import sys
+from database import Database
+
+# --- Configuration ---
+SERIAL_PORT = '/dev/ttyUSB0'
+BAUD_RATE = 57600
+LOG_INTERVAL = 1.0
+RETRY_COUNT = 5
+RETRY_DELAY = 1.0
+
+def get_telemetry_data(vehicle):
+    for attempt in range(RETRY_COUNT):
+        try:
+            gps = vehicle.location.global_relative_frame
+            battery = vehicle.battery
+            velocity = vehicle.velocity
+            gps_fix = getattr(vehicle.gps_0, 'fix_type', 0)
+            sats_visible = getattr(vehicle.gps_0, 'satellites_visible', 0)
+
+            # Validate GPS data
+            lat = gps.lat if gps and gps.lat and gps.lat != 0.0 else None
+            lon = gps.lon if gps and gps.lon and gps.lon != 0.0 else None
+            alt = gps.alt if gps and gps.alt is not None else None
+            if lat is None or lon is None:
+                print(f"[WARN] Invalid GPS data (lat: {lat}, lon: {lon}, fix: {gps_fix}, sats: {sats_visible}), retrying {attempt+1}/{RETRY_COUNT}...")
+                time.sleep(RETRY_DELAY)
+                #continue
+
+            # Validate battery data
+            voltage = battery.voltage if battery and battery.voltage and battery.voltage > 0.0 else None
+            if voltage is None:
+                print(f"[WARN] Invalid battery voltage ({battery.voltage}), retrying {attempt+1}/{RETRY_COUNT}...")
+                time.sleep(RETRY_DELAY)
+                #continue
+
+            data = {
+                "timestamp": datetime.utcnow(),
+                "gps": {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "altitude": alt
+                },
+                "battery": {
+                    "voltage": voltage,
+                    "current": battery.current if battery else None,
+                    "level": battery.level if battery else None
+                },
+                "heading": vehicle.heading if vehicle.heading is not None else None,
+                "velocity": {
+                    "x": velocity[0] if velocity else None,
+                    "y": velocity[1] if velocity else None,
+                    "z": velocity[2] if velocity else None
+                },
+                "mode": str(vehicle.mode.name) if vehicle.mode else None,
+                "armed": vehicle.armed if vehicle else None,
+                "system_status": str(vehicle.system_status.state) if vehicle.system_status else None
+            }
+            return data
+        except Exception as e:
+            print(f"[ERROR] Telemetry retrieval error (attempt {attempt+1}/{RETRY_COUNT}): {e}")
+            time.sleep(RETRY_DELAY)
+    
+    print("[ERROR] Failed to retrieve valid telemetry data after retries.")
+    return None
+
+def connect_vehicle():
+    try:
+        vehicle = connect(SERIAL_PORT, baud=BAUD_RATE, wait_ready=True)
+        print(f"Connected to rover on {SERIAL_PORT}")
+        return vehicle
+    except Exception as e:
+        print(f"Failed to connect to rover: {e}")
+        return None
+
+def log_telemetry_once(vehicle, db):
+    """Log telemetry data once to the database and increment trip count."""
+    try:
+        telemetry = get_telemetry_data(vehicle)
+        if telemetry:
+            print(f"[DEBUG] Final Telemetry: {telemetry}")
+            db.insert_telemetry(telemetry)
+        else:
+            print("[ERROR] Failed to retrieve valid telemetry data.")
+    except Exception as e:
+        print(f"[ERROR] Telemetry logging error: {e}")
+
+def main():
+    vehicle = None
+    db = None
+
+    try:
+        db = Database()
+        vehicle = connect_vehicle()
+        if not vehicle:
+            print("Exiting due to connection failure.")
+            return
+
+        print("Starting telemetry logging...")
+        while True:
+            telemetry = get_telemetry_data(vehicle)
+            if telemetry:
+                print(f"[DEBUG] Telemetry: {telemetry}")
+                db.insert_telemetry(telemetry)
+            else:
+                print("Failed to retrieve telemetry data.")
+            time.sleep(LOG_INTERVAL)
+
+    except KeyboardInterrupt:
+        print("\nStopping telemetry logging...")
+    except Exception as e:
+        print(f"Main loop error: {e}")
+    finally:
+        if vehicle:
+            vehicle.close()
+            print("Rover connection closed.")
+        if db:
+            db.close()
+
+if __name__ == '__main__':
+    main()

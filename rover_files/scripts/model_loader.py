@@ -1,0 +1,79 @@
+import onnxruntime as ort
+import os
+from pathlib import Path
+# hehe
+class ModelLoader:
+    """Class to load and manage ONNX models for car and number plate detection."""
+    
+    def __init__(self, car_model_path: str, np_model_path: str):
+        """
+        Initialize the ModelLoader with paths to car and number plate ONNX models.
+        
+        Args:
+            car_model_path (str): Path to the car detection ONNX model.
+            np_model_path (str): Path to the number plate detection ONNX model.
+        
+        Raises:
+            FileNotFoundError: If model files do not exist.
+            RuntimeError: If model loading fails.
+        """
+        # Validate model paths
+        self.car_model_path = Path(car_model_path)
+        self.np_model_path = Path(np_model_path)
+        
+        if not self.car_model_path.exists():
+            raise FileNotFoundError(f"Car model file not found: {self.car_model_path}")
+        if not self.np_model_path.exists():
+            raise FileNotFoundError(f"Number plate model file not found: {self.np_model_path}")
+        
+        # Initialize inference sessions
+        self.car_session = None
+        self.np_session = None
+        self._load_models()
+    
+    def _load_models(self):
+        """Load the ONNX models into inference sessions."""
+        try:
+            self.car_session = ort.InferenceSession(str(self.car_model_path))
+            print(f"Successfully loaded car detection model: {self.car_model_path}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load car detection model: {str(e)}")
+        
+        try:
+            self.np_session = ort.InferenceSession(str(self.np_model_path))
+            print(f"Successfully loaded number plate detection model: {self.np_model_path}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load number plate detection model: {str(e)}")
+    
+    def get_car_session(self):
+        """
+        Get the car detection model inference session.
+        
+        Returns:
+            ort.InferenceSession: The car detection model session.
+        """
+        return self.car_session
+    
+    def get_np_session(self):
+        """
+        Get the number plate detection model inference session.
+        
+        Returns:
+            ort.InferenceSession: The number plate detection model session.
+        """
+        return self.np_session
+    
+    def get_car_input_name(self):
+        return self.car_session.get_inputs()[0].name
+    
+    def get_np_input_name(self):
+        return self.np_session.get_inputs()[0].name
+
+if __name__ == "__main__":
+    # Example usage for testing
+    model_loader = ModelLoader(
+        car_model_path="../models/car.onnx",
+        np_model_path="../models//np.onnx"
+    )
+    print("Car model input name:", model_loader.get_car_input_name())
+    print("Number plate model input name:", model_loader.get_np_input_name())
